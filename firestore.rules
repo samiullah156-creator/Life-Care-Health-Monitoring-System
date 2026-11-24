@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return request.auth.uid == uid;
+    }
+    // Only use get() for update/delete; avoid on create to prevent permission errors during sign-up
+    function isAdmin() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    function isDoctor() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'doctor';
+    }
+
+    // Users: sign-up creates own doc (create only when path uid == auth uid)
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update, delete: if isOwner(userId) || isAdmin();
+    }
+
+    // Doctors: sign-up creates own doc when registering as doctor
+    // Only admin can change verificationStatus, adminComment, approved; doctor can update other fields only
+    match /doctors/{doctorId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == doctorId;
+      allow update: if isOwner(doctorId) && request.resource.data.verificationStatus == resource.data.verificationStatus && request.resource.data.adminComment == resource.data.adminComment && request.resource.data.approved == resource.data.approved || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /appointments/{appointmentId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.doctorId == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isAuthenticated();
+      allow update, delete: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.doctorId == request.auth.uid ||
+        isAdmin()
+      );
+    }
+
+    match /healthTips/{tipId} {
+      allow read: if true;
+      allow create: if (isAuthenticated() && isDoctor()) || isAdmin();
+      allow update, delete: if isAuthenticated() && (resource.data.createdByDoctor == request.auth.uid || isAdmin());
+    }
+
+    match /recipes/{recipeId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /exercisePlans/{planId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /dietPlans/{planId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Optional: admins collection for admin list (read by admins only)
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
